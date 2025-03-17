@@ -1,0 +1,43 @@
+// Written by James Mu
+// Template from Dr. Palmeri
+
+@startuml
+
+[*] -> init
+
+state init {
+    init_run: user set sampling rate
+    init_run: user set LRI
+}
+
+state acquiring {
+    acquiring_run: acquire amplified electrogram
+    acquiring_run: acquire comparator output
+}
+
+state processing {
+    processing_run: detect ventricular depolarization
+    processing_run: determine R-R interval
+    processing_run: calculate instantaneous HR
+    processing_run: update HR
+}
+
+state pacing {
+    pacing_run: trigger pacemaker output for predetermined amount of time
+}
+
+state error {
+    error_run: safe mode
+}
+
+init -> acquiring : init complete
+init -d-> error : init failed
+acquiring -> processing : signals acquired
+processing -u-> pacing : R-R interval > LRI detected
+processing -> acquiring : normal HR detected
+pacing -> acquiring : pacing complete
+acquiring -d-> error : signal acquisition failed
+error -> acquiring : reset error
+error -> [*] : time out
+
+@enduml
