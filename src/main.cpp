@@ -21,6 +21,7 @@ int samplingInterval;
 int LRI;
 float true_ECG_amp;
 float true_ECG_comp;
+float HR;
 
 bool processFlag = false;
 
@@ -33,6 +34,7 @@ unsigned long prevEdgeTime = 0; // time of last rising edge
 
 // funcs
 int findRR(void);
+void findInstantHR(int);
 
 // init state machine
 enum
@@ -129,6 +131,17 @@ int findRR()
         Serial.println(rr);
         Serial.print(">Detetcted R wave:");
         Serial.println(1);
+        
+        findInstantHR(rr);
+        Serial.print(" Instant HR:");
+        Serial.println(HR);
+        return rr;
         }
     prevCompVoltage = true_ECG_comp;
+    Serial.print(">Detetcted R wave:");
+    Serial.println(0);
+}
+
+void findInstantHR(int rr) {
+    HR = 60000 / rr;
 }
