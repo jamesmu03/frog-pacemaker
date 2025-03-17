@@ -8,68 +8,90 @@
 // Definitions
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
+#define ECG_AMP_PIN A0
+#define ECG_COMP_PIN A1
+#define SAMPLING_RATE 200 // Hz
 
-// init variables
+// init globals
 int ECG_amp;
 int ECG_comp;
 int samplingRate;
 int samplingInterval;
 int LRI;
+float true_ECG_amp;
+float true_ECG_comp;
+
 unsigned long previousMillis = 0; // to store the last time the sampling was done
 
 // init state machine
-enum { INIT, ACQUIRING, PROCESSING, PACING, ERROR };
+enum
+{
+    INIT,
+    ACQUIRING,
+    PROCESSING,
+    PACING,
+    ERROR
+};
+
 int currentState = INIT;
 
-void setup(){
-    Serial.begin(9600);
+void setup()
+{
+    pinMode(ECG_AMP_PIN, INPUT);
+    pinMode(ECG_COMP_PIN, INPUT);
+
+    Serial.begin(115200);
+    Serial.println("Hello World");
 }
 
-void loop(){
+void loop()
+{
     unsigned long currentMillis = millis();
 
     // check if arduino is functioning normally
 
     // run state machine
-    switch (currentState){
-        case INIT:
-            // apply user inputted values
-            samplingRate = 200; // in Hz
-            samplingInterval = 1000 / samplingRate; // in ms
-            LRI = 1000; // in ms CHANGE THIS TO ACTUAL VALUE LATER
-            currentState = ACQUIRING;
-            break;
-        case ACQUIRING:
-            if (currentMillis - previousMillis >= samplingInterval) {
-                previousMillis = currentMillis;
-                // acquire analog data
-                ECG_amp = analogRead(A0);
-                ECG_comp = analogRead(A1);
-                currentState = PROCESSING;
-            }
-            break;
-        case PROCESSING:
-            // convert analog data to true voltage
-            float true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000);
-            float true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000);
-            Serial.println(true_ECG_amp / 1000.0);
-            Serial.println(true_ECG_comp / 1000.0);
+    switch (currentState)
+    {
+    case INIT:
+        samplingInterval = 1000 / SAMPLING_RATE; // in ms
+        LRI = 1000;                              // in ms CHANGE THIS TO ACTUAL VALUE LATER
+        currentState = ACQUIRING;
+        break;
+    case ACQUIRING:
+        if (currentMillis - previousMillis >= samplingInterval)
+        {
+            previousMillis = currentMillis;
+            // acquire analog data
+            ECG_amp = analogRead(ECG_AMP_PIN);
+            ECG_comp = analogRead(ECG_COMP_PIN);
+            currentState = PROCESSING;
+        }
+        break;
+    case PROCESSING:
+        // convert analog data to true voltage
+        true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
+        true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
+        Serial.print(">ECG_amp:");
+        Serial.println(true_ECG_amp);
+        Serial.print(">ECG_comp:");
+        Serial.println(true_ECG_comp);
 
-            // get R-R interval lol
+        // get R-R interval lol
 
-            // compare R-R interval with LRI and send to next state
+        // compare R-R interval with LRI and send to next state
 
-            currentState = ACQUIRING;
-            break;
-        case PACING:
-            // shock em
-            break;
-        case ERROR:
-            Serial.println("error state");
-            break;
-        default:
-            currentState = ERROR;
-            Serial.println("default state");
-            break;
+        currentState = ACQUIRING;
+        break;
+    case PACING:
+        // shock em
+        break;
+    case ERROR:
+        Serial.println("error state");
+        break;
+    default:
+        currentState = ERROR;
+        Serial.println("default state");
+        break;
     }
 }
