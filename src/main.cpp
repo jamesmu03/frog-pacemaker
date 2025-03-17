@@ -10,7 +10,8 @@
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
 #define ECG_AMP_PIN A0
 #define ECG_COMP_PIN A1
-#define SAMPLING_RATE 200 // Hz
+#define SAMPLING_RATE 200  // Hz
+#define COMP_THRESHOLD 4.0 // V
 
 // init globals
 int ECG_amp;
@@ -21,7 +22,17 @@ int LRI;
 float true_ECG_amp;
 float true_ECG_comp;
 
+bool processFlag = false;
+
 unsigned long previousMillis = 0; // to store the last time the sampling was done
+unsigned long currentMillis;
+
+float RR_interval; // reported rr from func (via comp values)
+float prevCompVoltage;
+unsigned long prevEdgeTime = 0; // time of last rising edge
+
+// funcs
+int findRR(void);
 
 // init state machine
 enum
@@ -46,10 +57,9 @@ void setup()
 
 void loop()
 {
-    unsigned long currentMillis = millis();
+    currentMillis = millis();
 
     // check if arduino is functioning normally
-
     // run state machine
     switch (currentState)
     {
@@ -66,22 +76,27 @@ void loop()
             ECG_amp = analogRead(ECG_AMP_PIN);
             ECG_comp = analogRead(ECG_COMP_PIN);
             currentState = PROCESSING;
+            processFlag = true;
         }
         break;
     case PROCESSING:
-        // convert analog data to true voltage
-        true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
-        true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
-        Serial.print(">ECG_amp:");
-        Serial.println(true_ECG_amp);
-        Serial.print(">ECG_comp:");
-        Serial.println(true_ECG_comp);
+        if (processFlag == true) {
+            // convert analog data to true voltage
+            true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
+            true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
+            // Serial.print(">ECG_amp:"); // formatted for Teleplot
+            // Serial.println(true_ECG_amp);
+            // Serial.print(">ECG_comp:");
+            // Serial.println(true_ECG_comp);
 
-        // get R-R interval lol
+            RR_interval = findRR();
 
-        // compare R-R interval with LRI and send to next state
-
-        currentState = ACQUIRING;
+            processFlag = false;
+            currentState = ACQUIRING;
+        } else {
+            processFlag = false;
+            currentState = ACQUIRING;
+        }
         break;
     case PACING:
         // shock em
@@ -94,4 +109,25 @@ void loop()
         Serial.println("default state");
         break;
     }
+}
+
+int findRR()
+{
+    if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10))
+        {
+        int rr = (currentMillis - prevEdgeTime);
+        prevEdgeTime = currentMillis;
+        // Serial.print("true_ECG_comp: ");
+        // Serial.print(true_ECG_comp);
+        // Serial.print(", prevCompVoltage: ");
+        // Serial.print(prevCompVoltage);
+        // Serial.print(", prevEdgeTime: ");
+        // Serial.print(prevEdgeTime);
+        // Serial.print(", currentMillis: ");
+        // Serial.print(currentMillis);
+        Serial.print(", RR: ");
+        Serial.println(rr);
+        return rr;
+        }
+    prevCompVoltage = true_ECG_comp;
 }
