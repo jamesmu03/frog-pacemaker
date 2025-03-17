@@ -143,5 +143,5 @@ int findRR()
 }
 
 void findInstantHR(int rr) {
-    HR = 60000 / rr;
+    HR = 60000.0 / rr;
 }
