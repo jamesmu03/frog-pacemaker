@@ -84,10 +84,10 @@ void loop()
             // convert analog data to true voltage
             true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
             true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
-            // Serial.print(">ECG_amp:"); // formatted for Teleplot
-            // Serial.println(true_ECG_amp);
-            // Serial.print(">ECG_comp:");
-            // Serial.println(true_ECG_comp);
+            Serial.print(">ECG_amp:"); // formatted for Teleplot
+            Serial.println(true_ECG_amp);
+            Serial.print(">ECG_comp:");
+            Serial.println(true_ECG_comp);
 
             RR_interval = findRR();
 
@@ -127,7 +127,8 @@ int findRR()
         // Serial.print(currentMillis);
         Serial.print(", RR: ");
         Serial.println(rr);
-        return rr;
+        Serial.print(">Detetcted R wave:");
+        Serial.println(1);
         }
     prevCompVoltage = true_ECG_comp;
 }
