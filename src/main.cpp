@@ -75,7 +75,7 @@ void loop()
     case INIT:
         // Initialization state
         samplingInterval = 1000 / SAMPLING_RATE; // Calculate sampling interval in ms
-        LRI_BPM = 60; // Set lower rate interval in BPM
+        LRI_BPM = 90; // Set lower rate interval in BPM
         LRI = 60000 / LRI_BPM; // Convert BPM to ms
         currentState = ACQUIRING; // Transition to ACQUIRING state
         break;
@@ -114,6 +114,8 @@ void loop()
             processFlag = false; // Reset processFlag
             currentState = ACQUIRING; // Transition to ACQUIRING state
         }
+        Serial.print(">Pace:");
+        Serial.println(0);
         break;
     case PACING:
         // Pacing state
@@ -163,6 +165,8 @@ void findInstantHR(int rr) {
 void pace() {
     // Function to simulate pacing
     Serial.println("Pacing..."); // Print pacing message
+    Serial.print(">Pace:");
+    Serial.println(1);
     digitalWrite(PACING_PIN, HIGH); // Set pacing pin HIGH
     delay(CHRONAXIE * 2); // Delay for twice the chronaxie duration
     digitalWrite(PACING_PIN, LOW); // Set pacing pin LOW
