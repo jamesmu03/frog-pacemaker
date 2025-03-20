@@ -75,7 +75,7 @@ void loop()
     case INIT:
         // Initialization state
         samplingInterval = 1000 / SAMPLING_RATE; // Calculate sampling interval in ms
-        LRI_BPM = 90; // Set lower rate interval in BPM
+        LRI_BPM = 60; // Set lower rate interval in BPM
         LRI = 60000 / LRI_BPM; // Convert BPM to ms
         currentState = ACQUIRING; // Transition to ACQUIRING state
         break;
