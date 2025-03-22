@@ -1,4 +1,4 @@
-timestamp(ms),ECG_amp,ECG_comp,Detected R wave,Pace,
+timestamp(ms),ECG_amp,ECG_comp,Detected_R_wave,Pace,
 "1742502565.21",,,"0",,
 "1742502565.211",,,,"0",
 "1742502565.213","2.36",,,,
