@@ -141,7 +141,7 @@ int findRR()
     {
         int rr = (currentMillis - prevEdgeTime); // Calculate RR interval
         prevEdgeTime = currentMillis; // Update prevEdgeTime
-        Serial.print(", RR: "); // Print RR interval
+        Serial.print("RR: "); // Print RR interval
         Serial.println(rr);
         Serial.print(">Detected R wave:"); // Print R wave detection message
         Serial.println(1);
