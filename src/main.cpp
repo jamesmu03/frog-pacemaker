@@ -6,51 +6,55 @@
 #include <Adafruit_SSD1306.h>
 
 // Definitions
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
-#define ECG_AMP_PIN A0 // Analog pin for ECG amplitude signal
-#define ECG_COMP_PIN A1 // Analog pin for ECG comparison signal
-#define SAMPLING_RATE 200 // Sampling rate in Hz
+#define ECG_AMP_PIN A0 // Amplified ECG Signal Input
+#define ECG_COMP_PIN A1 // ECG Comparator Signal Input
+#define SAMPLING_RATE 200 // Hz
 #define COMP_THRESHOLD 4.0 // Voltage threshold for detecting R-wave
-#define PACING_PIN 2 // Digital output pin for pacing signal
-#define CHRONAXIE 1.7895 // Chronaxie duration in ms (example value, replace with actual value)
+#define PACING_PIN 2 // Pacing output pin
+#define CHRONAXIE 1.7895 // Chronaxie duration in ms
+#define OLED_WIDTH 128
+#define OLED_HEIGHT 64
+#define OLED_RESET -1
 
 // Global variables
-int ECG_amp; // Variable to store ECG amplitude reading
-int ECG_comp; // Variable to store ECG comparison reading
-int samplingRate; // Sampling rate
-int samplingInterval; // Sampling interval in ms
+int ECG_amp; // 0-1023 (Raw Variable)
+int ECG_comp; // 0-1023
+int samplingRate; 
+int samplingInterval; 
 int LRI; // Lower rate interval in ms
 int LRI_BPM; // Lower rate interval in BPM
-float true_ECG_amp; // True ECG amplitude in volts
-float true_ECG_comp; // True ECG comparison voltage in volts
-float HR; // Heart rate
+float true_ECG_amp; // Calculated ECG amplitude in volts
+float true_ECG_comp; // Calculated ECG comparison voltage in volts
+float HR;
 
-bool processFlag = false; // Flag to indicate if processing is needed
+bool processFlag = false; // Used to only select rising edge once
 
-unsigned long previousMillis = 0; // Variable to store the last time sampling was done
-unsigned long currentMillis; // Variable to store the current time
+unsigned long previousMillis = 0; //Last time that data was acquired (Governed by sampling rate)
+unsigned long currentMillis; 
 
-float RR_interval; // Variable to store the RR interval
-float prevCompVoltage; // Variable to store the previous comparison voltage
-unsigned long prevEdgeTime = 0; // Variable to store the time of the last rising edge
+float RR_interval; // Current MEasured RR interval
+float prevCompVoltage; // To determine if it is a rising edge
+unsigned long prevEdgeTime = 0; // Variable to store the time of the last rising edge (For R-R calcualtions)
 
-// Function prototypes
+// Function declarations
 int findRR(void);
 void findInstantHR(int);
 void pace(void);
 
-// State machine states
+//Init Oled Display
+Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
+
+// State machine
 enum
 {
-    INIT, // Initialization state
-    ACQUIRING, // Acquiring data state
-    PROCESSING, // Processing data state
-    PACING, // Pacing state
-    ERROR // Error state
+    INIT, 
+    ACQUIRING, 
+    PROCESSING, 
+    PACING, 
+    ERROR 
 };
 
-int currentState = INIT; // Variable to store the current state
+int currentState = INIT; 
 
 void setup()
 {
@@ -58,11 +62,27 @@ void setup()
     pinMode(ECG_AMP_PIN, INPUT);
     pinMode(ECG_COMP_PIN, INPUT);
     pinMode(PACING_PIN, OUTPUT);
-    digitalWrite(PACING_PIN, LOW); // Set pacing pin to LOW initially
+    digitalWrite(PACING_PIN, LOW); 
 
-    // Initialize serial communication
+    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
+        Serial.println(F("SSD1306 allocation failed"));
+        for(;;); // Don't proceed, loop forever
+    }
+    
+    display.setTextSize(1);
+    display.display();
+    delay(1000);
+    display.clearDisplay();
+
+    display.setTextColor(WHITE);
+    display.setCursor(0, 0);
+    display.println("Measuring...");
+    display.display();
+    delay(2000);
+    display.clearDisplay();
+    display.setCursor(0, 0);
+
     Serial.begin(115200);
-    Serial.println("Hello World");
 }
 
 void loop()
@@ -73,33 +93,33 @@ void loop()
     switch (currentState)
     {
     case INIT:
-        // Initialization state
         samplingInterval = 1000 / SAMPLING_RATE; // Calculate sampling interval in ms
         LRI_BPM = 60; // Set lower rate interval in BPM
-        LRI = 60000 / LRI_BPM; // Convert BPM to ms
-        currentState = ACQUIRING; // Transition to ACQUIRING state
+        LRI = 60000 / LRI_BPM; // LRI in ms
+        currentState = ACQUIRING;
+        Serial.println("Initialized");
+        delay(500);
+        display.clearDisplay();
         break;
     case ACQUIRING:
         // Acquiring data state
         if (currentMillis - previousMillis >= samplingInterval)
         {
-            previousMillis = currentMillis; // Update previousMillis
-            // Acquire analog data
+            previousMillis = currentMillis;
             ECG_amp = analogRead(ECG_AMP_PIN);
             ECG_comp = analogRead(ECG_COMP_PIN);
-            currentState = PROCESSING; // Transition to PROCESSING state
-            processFlag = true; // Set processFlag to true
+            currentState = PROCESSING; 
+            processFlag = true; 
         }
         break;
     case PROCESSING:
-        // Processing data state
         if (processFlag == true) {
             // Convert analog data to true voltage
             true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
             true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
-            Serial.print(">ECG_amp:"); // Print ECG amplitude for Teleplot
+            Serial.print(">ECG_amp:"); // Formatted For Plotting in teleplot
             Serial.println(true_ECG_amp);
-            Serial.print(">ECG_comp:"); // Print ECG comparison voltage for Teleplot
+            Serial.print(">ECG_comp:"); // ""
             Serial.println(true_ECG_comp);
 
             RR_interval = findRR(); // Find RR interval
@@ -107,29 +127,26 @@ void loop()
             if (RR_interval > LRI) {
                 currentState = PACING; // Transition to PACING state if RR interval exceeds LRI
             } else {
-                processFlag = false; // Reset processFlag
-                currentState = ACQUIRING; // Transition to ACQUIRING state
+                processFlag = false; 
+                currentState = ACQUIRING;
             }
         } else {
-            processFlag = false; // Reset processFlag
-            currentState = ACQUIRING; // Transition to ACQUIRING state
+            processFlag = false; 
+            currentState = ACQUIRING; 
         }
         Serial.print(">Pace:");
         Serial.println(0);
         break;
     case PACING:
-        // Pacing state
-        pace(); // Call pace function
-        currentState = ACQUIRING; // Transition to ACQUIRING state
+        pace(); // Send pacing signal
+        currentState = ACQUIRING; 
         break;
     case ERROR:
-        // Error state
-        Serial.println("error state"); // Print error message
+        Serial.println("error state"); 
         break;
     default:
-        // Default state
+        // Default state -> Only reached if an invalid currentState happens, should not happen -> Error
         currentState = ERROR; // Transition to ERROR state
-        Serial.println("default state"); // Print default state message
         break;
     }
 }
@@ -138,34 +155,44 @@ int findRR()
 {
     // Function to find RR interval
     if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10))
-    {
-        int rr = (currentMillis - prevEdgeTime); // Calculate RR interval
+    { // Check for rising edge w/ debouce bc fuzzy near top of signal
+        int rr = (currentMillis - prevEdgeTime); 
         prevEdgeTime = currentMillis; // Update prevEdgeTime
         Serial.print("RR: "); // Print RR interval
         Serial.println(rr);
-        Serial.print(">Detected R wave:"); // Print R wave detection message
+        Serial.print(">Detected R wave:"); // plot
         Serial.println(1);
         
         findInstantHR(rr); // Find instant heart rate
-        Serial.print(" Instant HR:"); // Print instant heart rate
+        Serial.print("Instant HR:"); 
         Serial.println(HR);
-        return rr; // Return RR interval
+        
+
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("Beat Detected!");
+        display.print("HR = ");
+        display.print(HR);
+        display.println(" BPM");
+        display.print("R-R = ");
+        display.println(rr);
+        display.display();
+
+        return rr; 
     }
-    prevCompVoltage = true_ECG_comp; // Update prevCompVoltage
-    Serial.print(">Detected R wave:"); // Print R wave detection message
+    prevCompVoltage = true_ECG_comp; //Excludes falling edge
+    Serial.print(">Detected R wave:"); 
     Serial.println(0);
-    return 0; // Return 0 if no R wave detected
+    return 0; 
 }
 
 void findInstantHR(int rr) {
-    // Function to find instant heart rate
-    HR = 60000.0 / rr; // Calculate heart rate from RR interval
+    HR = 60000.0 / rr; // Calculate heart rate from RR interval (ms -> bpm)
 }
 
 void pace() {
-    // Function to simulate pacing
-    Serial.println("Pacing..."); // Print pacing message
-    Serial.print(">Pace:");
+    Serial.println("Pacing...");
+    Serial.print(">Pace:");  //plot
     Serial.println(1);
     digitalWrite(PACING_PIN, HIGH); // Set pacing pin HIGH
     delay(CHRONAXIE * 2); // Delay for twice the chronaxie duration
