@@ -87,7 +87,7 @@ void loop()
     {
     case INIT:
         samplingInterval = 1000 / SAMPLING_RATE;
-        LRI_BPM = 200;
+        LRI_BPM = 120;
         LRI = 60000 / LRI_BPM;
         currentState = ACQUIRING;
         Serial.println("Initialized");
@@ -143,8 +143,12 @@ int findRR()
 {
     if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10))
     {
+
         int rr = (currentMillis - prevEdgeTime);
+        
+        lastPaceTime = currentMillis;
         prevEdgeTime = currentMillis;
+
         Serial.print("RR: ");
         Serial.println(rr);
         Serial.print(">Detected R wave:");
@@ -181,7 +185,6 @@ void pace()
 {
     if (currentMillis - lastPaceTime >= LRI)
     {
-        Serial.println("Pacing...");
         Serial.print(">Pace:");
         Serial.println(1);
         lastPaceTime = currentMillis;
