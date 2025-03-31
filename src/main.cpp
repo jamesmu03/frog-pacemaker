@@ -19,6 +19,7 @@ int samplingRate;
 int samplingInterval;
 int LRI;
 int LRI_BPM;
+unsigned long lastPaceTime = 0;
 float true_ECG_amp;
 float true_ECG_comp;
 float HR;
@@ -100,41 +101,28 @@ void loop()
             ECG_amp = analogRead(ECG_AMP_PIN);
             ECG_comp = analogRead(ECG_COMP_PIN);
             currentState = PROCESSING;
-            processFlag = true;
         }
         break;
     case PROCESSING:
-        if (processFlag == true)
+        true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
+        true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
+        Serial.print(">ECG_amp:");
+        Serial.println(true_ECG_amp);
+        Serial.print(">ECG_comp:");
+        Serial.println(true_ECG_comp);
+
+        RR_interval = findRR();
+
+        if (currentMillis - prevEdgeTime > LRI)
         {
-            true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
-            true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
-            Serial.print(">ECG_amp:");
-            Serial.println(true_ECG_amp);
-            Serial.print(">ECG_comp:");
-            Serial.println(true_ECG_comp);
-
-            RR_interval = findRR();
-
-            if (RR_interval > LRI)
-            {
-                currentState = PACING;
-            }
-            else
-            {
-                currentState = ACQUIRING;
-            }
+            currentState = PACING;
         }
         else
         {
-            if (currentMillis - prevEdgeTime > LRI)
-            {
-                currentState = PACING;
-            }
-            else
-            {
-                currentState = ACQUIRING;
-            }
+            currentState = ACQUIRING;
         }
+
+
         Serial.print(">Pace:");
         Serial.println(0);
         break;
@@ -191,10 +179,15 @@ void findInstantHR(int rr)
 
 void pace()
 {
-    Serial.println("Pacing...");
-    Serial.print(">Pace:");
-    Serial.println(1);
-    digitalWrite(PACING_PIN, HIGH);
-    delay(CHRONAXIE);
-    digitalWrite(PACING_PIN, LOW);
+    if (currentMillis - lastPaceTime >= LRI)
+    {
+        Serial.println("Pacing...");
+        Serial.print(">Pace:");
+        Serial.println(1);
+        lastPaceTime = currentMillis;
+        digitalWrite(PACING_PIN, HIGH);
+        delay(CHRONAXIE);
+        digitalWrite(PACING_PIN, LOW);
+    }
+    
 }
