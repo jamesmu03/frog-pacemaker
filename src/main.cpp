@@ -195,6 +195,6 @@ void pace() {
     Serial.print(">Pace:");  //plot
     Serial.println(1);
     digitalWrite(PACING_PIN, HIGH); // Set pacing pin HIGH
-    delay(CHRONAXIE * 2); // Delay for twice the chronaxie duration
+    delay(CHRONAXIE); // Delay for twice the chronaxie duration
     digitalWrite(PACING_PIN, LOW); // Set pacing pin LOW
 }
