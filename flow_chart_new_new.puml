@@ -44,7 +44,7 @@ init -d-> error : init failed
 acquiring -> processing : signals acquired
 processing --> pacing : HR < LRI
 processing -> acquiring : HR > LRI
-processing -> set_comp_voltage
+processing -> set_comp_voltage : pacing not needed
 pacing --> set_comp_voltage : pacing complete
 set_comp_voltage -> acquiring : set comp voltage complete
 set_comp_voltage -d-> error : set comp voltage failed
