@@ -1,0 +1,55 @@
+// Written by James Mu
+// Template from Dr. Palmeri
+
+@startuml
+
+!theme mars
+
+[*] -> init
+
+state init {
+    init: set sampling rate
+    init: set LRI
+    init: acquire starting Vcomp
+}
+
+state acquiring {
+    acquiring: acquire amplified electrogram
+    acquiring: acquire comparator output
+    acquiring: find peaks
+}
+
+state processing {
+    processing: detect ventricular depolarization
+    processing: determine time since last depolarization
+    processing: calculate instantaneous HR
+    processing: filter out T waves
+    processing: calculate 95% CI of V peaks
+}
+
+state pacing {
+    pacing: trigger pacemaker
+}
+
+state set_comp_voltage as "set comp voltage" {
+    set_comp_voltage: set comparator voltage
+}
+
+state error {
+    error: safe mode
+}
+
+init -> acquiring : init complete
+init -d-> error : init failed
+acquiring -> processing : signals acquired
+processing --> pacing : HR < LRI
+processing -> acquiring : HR > LRI
+processing -> set_comp_voltage
+pacing --> set_comp_voltage : pacing complete
+set_comp_voltage -> acquiring : set comp voltage complete
+set_comp_voltage -d-> error : set comp voltage failed
+acquiring -d-> error : signal acquisition failed
+error -> acquiring : reset error
+error -d-> [*] : time out
+
+@enduml
