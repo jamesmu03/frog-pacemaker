@@ -52,13 +52,15 @@ enum State {
 int currentState = INIT;
 
 void setup() {
+    Serial.begin(115200);
     pinMode(ECG_AMP_PIN, INPUT);
     pinMode(ECG_COMP_PIN, INPUT);
     pinMode(PACING_PIN, OUTPUT);
     digitalWrite(PACING_PIN, LOW);
 
     if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-        for (;;); // Halt if OLED initialization fails
+        Serial.println("Error: OLED initialization failed. Halting execution.");
+        while (true);
     }
 
     display.setTextSize(1);
@@ -69,8 +71,6 @@ void setup() {
     display.display();
     delay(2000);
     display.clearDisplay();
-
-    Serial.begin(115200);
 }
 
 void loop() {
@@ -154,7 +154,7 @@ void loop() {
                 lastPaceTime = currentMillis;
 
                 digitalWrite(PACING_PIN, HIGH);
-                delay(CHRONAXIE);
+                delay(CHRONAXIE*2);
                 digitalWrite(PACING_PIN, LOW);
             }
             currentState = ACQUIRING;
