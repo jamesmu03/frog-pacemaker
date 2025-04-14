@@ -51,11 +51,6 @@ enum State {
 
 int currentState = INIT;
 
-// Function prototypes
-int findRR();
-void findInstantHR(int rr);
-void pace();
-
 void setup() {
     pinMode(ECG_AMP_PIN, INPUT);
     pinMode(ECG_COMP_PIN, INPUT);
@@ -110,7 +105,37 @@ void loop() {
             Serial.print(">ECG_comp: ");
             Serial.println(true_ECG_comp);
 
-            RR_interval = findRR();
+            // RR interval detection logic
+            if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10)) {
+                RR_interval = currentMillis - prevEdgeTime;
+                lastPaceTime = currentMillis;
+                prevEdgeTime = currentMillis;
+
+                // Instant HR calculation
+                HR = 60000.0 / RR_interval;
+
+                Serial.print("RR: ");
+                Serial.println(RR_interval);
+                Serial.print(">Detected R wave: ");
+                Serial.println(1);
+                Serial.print("Instant HR: ");
+                Serial.println(HR);
+
+                display.clearDisplay();
+                display.setCursor(0, 0);
+                display.println("Beat Detected!");
+                display.print("HR = ");
+                display.print(HR);
+                display.println(" BPM");
+                display.print("R-R = ");
+                display.println(RR_interval);
+                display.display();
+            } else {
+                Serial.print(">Detected R wave: ");
+                Serial.println(0);
+            }
+
+            prevCompVoltage = true_ECG_comp;
 
             if (currentMillis - prevEdgeTime > LRI) {
                 currentState = PACING;
@@ -123,7 +148,15 @@ void loop() {
             break;
 
         case PACING:
-            pace();
+            if (currentMillis - lastPaceTime >= LRI) {
+                Serial.print(">Pace: ");
+                Serial.println(1);
+                lastPaceTime = currentMillis;
+
+                digitalWrite(PACING_PIN, HIGH);
+                delay(CHRONAXIE);
+                digitalWrite(PACING_PIN, LOW);
+            }
             currentState = ACQUIRING;
             break;
 
@@ -134,56 +167,5 @@ void loop() {
         default:
             currentState = ERROR;
             break;
-    }
-}
-
-int findRR() {
-    if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10)) {
-        int rr = currentMillis - prevEdgeTime;
-        lastPaceTime = currentMillis;
-        prevEdgeTime = currentMillis;
-
-        Serial.print("RR: ");
-        Serial.println(rr);
-        Serial.print(">Detected R wave: ");
-        Serial.println(1);
-
-        findInstantHR(rr);
-
-        Serial.print("Instant HR: ");
-        Serial.println(HR);
-
-        display.clearDisplay();
-        display.setCursor(0, 0);
-        display.println("Beat Detected!");
-        display.print("HR = ");
-        display.print(HR);
-        display.println(" BPM");
-        display.print("R-R = ");
-        display.println(rr);
-        display.display();
-
-        return rr;
-    }
-
-    prevCompVoltage = true_ECG_comp;
-    Serial.print(">Detected R wave: ");
-    Serial.println(0);
-    return 0;
-}
-
-void findInstantHR(int rr) {
-    HR = 60000.0 / rr;
-}
-
-void pace() {
-    if (currentMillis - lastPaceTime >= LRI) {
-        Serial.print(">Pace: ");
-        Serial.println(1);
-        lastPaceTime = currentMillis;
-
-        digitalWrite(PACING_PIN, HIGH);
-        delay(CHRONAXIE);
-        digitalWrite(PACING_PIN, LOW);
     }
 }
