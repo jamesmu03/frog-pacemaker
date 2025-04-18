@@ -6,7 +6,7 @@
 #include <Adafruit_SSD1306.h>
 
 // Pin and hardware definitions
-#define ECG_AMP_PIN 2
+#define ECG_AMP_PIN 35
 #define ECG_COMP_PIN 4
 #define SAMPLING_RATE 200
 #define COMP_THRESHOLD 4.0
