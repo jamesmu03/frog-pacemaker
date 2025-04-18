@@ -17,6 +17,10 @@
 #define OLED_HEIGHT 64
 #define OLED_RESET -1
 
+// Function prototypes
+void updateOLED(float HR, float RR_interval);
+void sendToTeleplot(float ECG_amp, float ECG_comp, float HR, float RR_interval, int pace);
+
 // Variables
 int ECG_amp;
 int ECG_comp;
@@ -29,6 +33,7 @@ unsigned long lastPaceTime = 0;
 unsigned long previousMillis = 0;
 unsigned long currentMillis;
 unsigned long prevEdgeTime = 0;
+unsigned long pacingDisplayTime = 0;
 
 float true_ECG_amp;
 float true_ECG_comp;
@@ -122,18 +127,7 @@ void loop() {
                 Serial.print("Instant HR: ");
                 Serial.println(HR);
 
-                display.clearDisplay();
-                display.setCursor(0, 0);
-                display.println("Beat Detected!");
-                display.print("HR = ");
-                display.print(HR);
-                display.println(" BPM");
-                display.print("R-R = ");
-                display.println(RR_interval);
-                display.display();
-            } else {
-                Serial.print(">Detected R wave: ");
-                Serial.println(0);
+                updateOLED(HR, RR_interval);
             }
 
             prevCompVoltage = true_ECG_comp;
@@ -144,8 +138,7 @@ void loop() {
                 currentState = ACQUIRING;
             }
 
-            Serial.print(">Pace: ");
-            Serial.println(0);
+            sendToTeleplot(true_ECG_amp, true_ECG_comp, HR, RR_interval, 0);
             break;
 
         case PACING:
@@ -155,8 +148,11 @@ void loop() {
                 lastPaceTime = currentMillis;
 
                 digitalWrite(PACING_PIN, HIGH);
-                delay(CHRONAXIE*2);
+                delay(CHRONAXIE * 2); // Pacing pulse duration
                 digitalWrite(PACING_PIN, LOW);
+
+                // Record the time to keep "Pacing..." on the screen
+                pacingDisplayTime = currentMillis;
             }
             currentState = ACQUIRING;
             break;
@@ -169,4 +165,55 @@ void loop() {
             currentState = ERROR;
             break;
     }
+}
+
+// Function to update the OLED display
+void updateOLED(float HR, float RR_interval) {
+    display.clearDisplay();
+
+    // Header
+    display.setTextSize(2);
+    display.setCursor(0, 0);
+    display.println("HRM");
+
+    display.setTextSize(1);
+
+    // LRI BPM
+    display.setCursor(0, 20);
+    display.print("LRI BPM: ");
+    display.println(LRI_BPM);
+
+    // Beat detection and data
+    display.setCursor(0, 30);
+    display.print("HR: ");
+    display.print(HR);
+    display.println(" BPM");
+
+    display.setCursor(0, 40);
+    display.print("R-R: ");
+    display.print(RR_interval);
+    display.println(" ms");
+
+    display.setCursor(0, 50);
+    // Keep "Pacing..." on the screen for a longer duration (e.g., 1 second)
+    if (digitalRead(PACING_PIN) == HIGH || (currentMillis - pacingDisplayTime < 300)) {
+        display.println("Pacing...");
+    }
+
+    // Finalize display
+    display.display();
+}
+
+// Function to send data to Teleplot
+void sendToTeleplot(float ECG_amp, float ECG_comp, float HR, float RR_interval, int pace) {
+    Serial.print(">ECG_amp:");
+    Serial.print(ECG_amp);
+    Serial.print(">ECG_comp:");
+    Serial.print(ECG_comp);
+    Serial.print(">HR:");
+    Serial.print(HR);
+    Serial.print(">RR_interval:");
+    Serial.print(RR_interval);
+    Serial.print(">Pace:");
+    Serial.println(pace);
 }
