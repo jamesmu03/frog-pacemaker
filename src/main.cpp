@@ -4,6 +4,10 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <deque>
+#include <algorithm>
+#include <cmath>
+#include <vector> // Add this include for std::vector
 
 // Pin and hardware definitions
 #define ECG_AMP_PIN 35
@@ -20,6 +24,9 @@
 // Function prototypes
 void updateOLED(float HR, float RR_interval);
 void sendToTeleplot(float ECG_amp, float ECG_comp, float HR, float RR_interval, int pace);
+void updateVComp();
+void handleMissedBeat();
+void processPeak(float peakAmplitude);
 
 // Variables
 int ECG_amp;
@@ -56,6 +63,13 @@ enum State {
 };
 
 int currentState = INIT;
+
+// Simplified variables for peak amplitudes
+float peakAmplitudes[10] = {0}; // Fixed-size array for the last 10 peaks
+int peakIndex = 0;             // Index to track the current position in the array
+int peakCount = 0;             // Number of valid peaks stored in the array
+
+float vComp = COMP_THRESHOLD;    // Initial Vcomp value
 
 void setup() {
     Serial.begin(115200);
@@ -127,7 +141,13 @@ void loop() {
                 Serial.print("Instant HR: ");
                 Serial.println(HR);
 
+                // Process the detected peak
+                processPeak(true_ECG_amp);
+
                 updateOLED(HR, RR_interval);
+            } else if (currentMillis - prevEdgeTime > LRI) {
+                // Handle missed beat
+                handleMissedBeat();
             }
 
             prevCompVoltage = true_ECG_comp;
@@ -197,7 +217,7 @@ void updateOLED(float HR, float RR_interval) {
 
     display.setCursor(0, 50);
     display.print("Comparator: ");
-    display.print(comparatorVoltage, 2);
+    display.print(vComp, 2);
     display.println(" V");
 
     // Finalize display
@@ -216,4 +236,73 @@ void sendToTeleplot(float ECG_amp, float ECG_comp, float HR, float RR_interval, 
     Serial.print(RR_interval);
     Serial.print(">Pace:");
     Serial.println(pace);
+}
+
+void updateVComp() {
+    if (peakCount >= 10) {
+        // Sort the array to find the 5th percentile
+        float sortedPeaks[10];
+        memcpy(sortedPeaks, peakAmplitudes, sizeof(peakAmplitudes));
+        for (int i = 0; i < 10 - 1; i++) {
+            for (int j = i + 1; j < 10; j++) {
+                if (sortedPeaks[i] > sortedPeaks[j]) {
+                    float temp = sortedPeaks[i];
+                    sortedPeaks[i] = sortedPeaks[j];
+                    sortedPeaks[j] = temp;
+                }
+            }
+        }
+
+        // Calculate the 5th percentile index
+        int index = (int)(0.05 * peakCount);
+        vComp = sortedPeaks[index];
+    }
+
+    // Clamp vComp to the valid range
+    if (vComp < 0.0f) {
+        vComp = 0.0f;
+    } else if (vComp > 3.3f) {
+        vComp = 3.3f;
+    }
+
+    // Debug print
+    Serial.print("vComp (clamped): ");
+    Serial.println(vComp);
+
+    // Write the new Vcomp to the DAC pin
+    int dacValue = map(vComp * 1000, 0, 3300, 0, 255);
+    dacWrite(DAC_PIN, dacValue);
+
+    // Debug print
+    Serial.print("DAC Value: ");
+    Serial.println(dacValue);
+}
+
+void handleMissedBeat() {
+    vComp = std::max(0.0f, vComp - 0.1f); // Ensure vComp doesn't go below 0
+    vComp = std::min(vComp, 3.3f);        // Clamp to 3.3V
+
+    int dacValue = map(vComp * 1000, 0, 3300, 0, 255);
+    dacWrite(DAC_PIN, dacValue);
+
+    // Debug print
+    Serial.print("Missed Beat - vComp: ");
+    Serial.println(vComp);
+    Serial.print("DAC Value: ");
+    Serial.println(dacValue);
+}
+
+void processPeak(float peakAmplitude) {
+    // Add the new peak to the array in a circular manner
+    peakAmplitudes[peakIndex] = peakAmplitude;
+    peakIndex = (peakIndex + 1) % 10; // Wrap around the index
+    if (peakCount < 10) {
+        peakCount++; // Increment the count until the array is full
+    }
+
+    // Debug print
+    Serial.print("New Peak Amplitude: ");
+    Serial.println(peakAmplitude);
+
+    updateVComp();
 }
