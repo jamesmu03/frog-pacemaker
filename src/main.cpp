@@ -171,34 +171,34 @@ void loop() {
 void updateOLED(float HR, float RR_interval) {
     display.clearDisplay();
 
-    // Header
-    display.setTextSize(2);
-    display.setCursor(0, 0);
-    display.println("HRM");
-
     display.setTextSize(1);
 
     // LRI BPM
-    display.setCursor(0, 20);
+    display.setCursor(0, 0);
     display.print("LRI BPM: ");
     display.println(LRI_BPM);
 
     // Beat detection and data
-    display.setCursor(0, 30);
+    display.setCursor(0, 20);
     display.print("HR: ");
     display.print(HR);
     display.println(" BPM");
 
-    display.setCursor(0, 40);
+    display.setCursor(0, 30);
     display.print("R-R: ");
     display.print(RR_interval);
     display.println(" ms");
 
-    display.setCursor(0, 50);
+    display.setCursor(0, 40);
     // Keep "Pacing..." on the screen for a longer duration (e.g., 1 second)
     if (digitalRead(PACING_PIN) == HIGH || (currentMillis - pacingDisplayTime < 300)) {
         display.println("Pacing...");
     }
+
+    display.setCursor(0, 50);
+    display.print("Comparator: ");
+    display.print(comparatorVoltage, 2);
+    display.println(" V");
 
     // Finalize display
     display.display();
