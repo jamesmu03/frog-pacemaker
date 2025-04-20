@@ -4,102 +4,130 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <deque>
-#include <algorithm>
-#include <cmath>
-#include <vector> // Add this include for std::vector
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <numeric>
+#include "realtime/Detectors.h"
 
 // Pin and hardware definitions
 #define ECG_AMP_PIN 35
 #define ECG_COMP_PIN 4
 #define SAMPLING_RATE 200
-#define COMP_THRESHOLD 4.0
+#define COMP_THRESHOLD 2.5
 #define PACING_PIN 2
 #define CHRONAXIE 1.7895
 #define DAC_PIN 25
+#define PEAK_QUEUE_SIZE 10
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 64
 #define OLED_RESET -1
 
 // Function prototypes
-void updateOLED(float HR, float RR_interval);
-void sendToTeleplot(float ECG_amp, float ECG_comp, float HR, float RR_interval, int pace);
-void updateVComp();
-void handleMissedBeat();
-void processPeak(float peakAmplitude);
+void paceMakerTask(void *pvParameters);
+void compVoltageTask(void *pvParameters);
+void updateOLED(float HR, float RR_interval, Adafruit_SSD1306 &display);
 
-// Variables
-int ECG_amp;
-int ECG_comp;
-int samplingRate;
-int samplingInterval;
-int LRI;
-int LRI_BPM;
+// Threading
+TaskHandle_t pacemakerTaskHandle;
+TaskHandle_t compVoltageTaskHandle;
 
-unsigned long lastPaceTime = 0;
-unsigned long previousMillis = 0;
-unsigned long currentMillis;
-unsigned long prevEdgeTime = 0;
-unsigned long pacingDisplayTime = 0;
-
+// Globals
+SemaphoreHandle_t ecgAmpMutex;
+SemaphoreHandle_t compVoltageSemaphore;   // <-- NEW: Binary semaphore for synchronization
+volatile int ECG_amp;
 float true_ECG_amp;
-float true_ECG_comp;
-float HR;
-float RR_interval;
-float prevCompVoltage;
+float compVoltage;
+int numOfSaved = 0;
 
-bool processFlag = false;
-
-// OLED display
-Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
-
-// State machine
-enum State {
-    INIT,
-    ACQUIRING,
-    PROCESSING,
-    PACING,
-    ERROR
-};
-
-int currentState = INIT;
-
-// Simplified variables for peak amplitudes
-float peakAmplitudes[10] = {0}; // Fixed-size array for the last 10 peaks
-int peakIndex = 0;             // Index to track the current position in the array
-int peakCount = 0;             // Number of valid peaks stored in the array
-
-float vComp = COMP_THRESHOLD;    // Initial Vcomp value
-
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     pinMode(ECG_AMP_PIN, INPUT);
     pinMode(ECG_COMP_PIN, INPUT);
     pinMode(PACING_PIN, OUTPUT);
-    digitalWrite(PACING_PIN, LOW);
+    pinMode(DAC_PIN, OUTPUT);
 
-    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-        Serial.println("Error: OLED initialization failed. Halting execution.");
-        while (true);
-    }
+    xTaskCreatePinnedToCore(paceMakerTask, "PaceMakerTask", 5000, NULL, 1, &pacemakerTaskHandle, 0);
+    xTaskCreatePinnedToCore(compVoltageTask, "CompVoltageTask", 20000, NULL, 1, &compVoltageTaskHandle, 1);
 
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.println("Measuring...");
-    display.display();
-    delay(2000);
-    display.clearDisplay();
+    ecgAmpMutex = xSemaphoreCreateMutex();
+    compVoltageSemaphore = xSemaphoreCreateBinary(); // <-- NEW: Create the binary semaphore
 }
 
-void loop() {
-    currentMillis = millis();
+void loop()
+{
+    // Empty (Check Tasks)
+}
 
-    switch (currentState) {
+// Function to update the OLED display
+void updateOLED(float HR, float RR_interval, Adafruit_SSD1306 &display)
+{
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.setTextSize(2);
+    display.print(HR, 2);
+    display.println(" BPM");
+
+    display.setTextSize(1);
+    display.print("RR: ");
+    display.print(RR_interval, 0);
+    display.println(" ms");
+
+    display.print("VComp: ");
+    display.print(compVoltage, 2);
+    display.println(" V");
+
+    display.print("Num of saved: ");
+    display.print(numOfSaved, 0);
+
+    display.display();
+}
+
+void paceMakerTask(void *pvParameters)
+{
+    // State machine
+    enum State
+    {
+        INIT,
+        ACQUIRING,
+        PROCESSING,
+        PACING,
+        ERROR
+    };
+
+    // Initialize the OLED display
+    Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
+    display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    display.clearDisplay();
+    display.display();
+
+    State currentState = INIT;
+    volatile int ECG_comp;
+    int samplingRate;
+    int samplingInterval;
+    int LRI;
+    int LRI_BPM;
+    unsigned long lastPaceTime = 0;
+    unsigned long previousMillis = 0;
+    unsigned long currentMillis;
+    unsigned long prevEdgeTime = 0;
+    unsigned long pacingDisplayTime = 0;
+    float true_ECG_comp;
+    float HR = 0;
+    float RR_interval = 0;
+    float prevCompVoltage = 0;
+
+    while (true)
+    {
+        currentMillis = millis();
+
+        switch (currentState)
+        {
         case INIT:
             samplingInterval = 1000 / SAMPLING_RATE;
-            LRI_BPM = 120;
+            LRI_BPM = 60;
             LRI = 60000 / LRI_BPM;
             currentState = ACQUIRING;
             Serial.println("Initialized");
@@ -108,70 +136,66 @@ void loop() {
             break;
 
         case ACQUIRING:
-            if (currentMillis - previousMillis >= samplingInterval) {
+            if (currentMillis - previousMillis >= samplingInterval)
+            {
                 previousMillis = currentMillis;
-                ECG_amp = analogRead(ECG_AMP_PIN);
+                if (xSemaphoreTake(ecgAmpMutex, portMAX_DELAY))
+                {
+                    ECG_amp = analogRead(ECG_AMP_PIN);
+                    xSemaphoreGive(ecgAmpMutex);
+                    Serial.print("ECG Amp: ");
+                    Serial.println(ECG_amp);
+                }
+                else
+                {
+                    Serial.println("Failed to take mutex in paceMakerTask");
+                }
+                
                 ECG_comp = analogRead(ECG_COMP_PIN);
+                // --- NEW: Trigger compVoltageTask after ACQUIRING ---
+                xSemaphoreGive(compVoltageSemaphore);
+                // ----------------------------------------------------
                 currentState = PROCESSING;
             }
             break;
 
         case PROCESSING:
-            true_ECG_amp = map(ECG_amp, 0, 1023, 0, 5000) / 1000.0;
-            true_ECG_comp = map(ECG_comp, 0, 1023, 0, 5000) / 1000.0;
-
-            Serial.print(">ECG_amp: ");
-            Serial.println(true_ECG_amp);
-            Serial.print(">ECG_comp: ");
-            Serial.println(true_ECG_comp);
+            true_ECG_amp = map(ECG_amp, 0, 4096, 0, 3300) / 1000.0;
+            true_ECG_comp = map(ECG_comp, 0, 4096, 0, 3300) / 1000.0;
 
             // RR interval detection logic
-            if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10)) {
+            if ((true_ECG_comp >= COMP_THRESHOLD) && (prevCompVoltage < COMP_THRESHOLD) && (currentMillis - prevEdgeTime > 10))
+            {
                 RR_interval = currentMillis - prevEdgeTime;
                 lastPaceTime = currentMillis;
                 prevEdgeTime = currentMillis;
 
-                // Instant HR calculation
                 HR = 60000.0 / RR_interval;
 
-                Serial.print("RR: ");
-                Serial.println(RR_interval);
-                Serial.print(">Detected R wave: ");
-                Serial.println(1);
-                Serial.print("Instant HR: ");
-                Serial.println(HR);
-
-                // Process the detected peak
-                processPeak(true_ECG_amp);
-
-                updateOLED(HR, RR_interval);
-            } else if (currentMillis - prevEdgeTime > LRI) {
-                // Handle missed beat
-                handleMissedBeat();
+                updateOLED(HR, RR_interval, display);
             }
 
             prevCompVoltage = true_ECG_comp;
 
-            if (currentMillis - prevEdgeTime > LRI) {
+            if (currentMillis - prevEdgeTime > LRI)
+            {
                 currentState = PACING;
-            } else {
+            }
+            else
+            {
                 currentState = ACQUIRING;
             }
-
-            sendToTeleplot(true_ECG_amp, true_ECG_comp, HR, RR_interval, 0);
             break;
 
         case PACING:
-            if (currentMillis - lastPaceTime >= LRI) {
-                Serial.print(">Pace: ");
-                Serial.println(1);
+            if (currentMillis - lastPaceTime >= LRI)
+            {
                 lastPaceTime = currentMillis;
 
                 digitalWrite(PACING_PIN, HIGH);
                 delay(CHRONAXIE * 2); // Pacing pulse duration
                 digitalWrite(PACING_PIN, LOW);
 
-                // Record the time to keep "Pacing..." on the screen
                 pacingDisplayTime = currentMillis;
             }
             currentState = ACQUIRING;
@@ -184,125 +208,75 @@ void loop() {
         default:
             currentState = ERROR;
             break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 
-// Function to update the OLED display
-void updateOLED(float HR, float RR_interval) {
-    display.clearDisplay();
+void compVoltageTask(void *pvParameters)
+{
+    float currentECG_amp = 0.0;
+    DetectorEngZeeRealTime detector(SAMPLING_RATE);
 
-    display.setTextSize(1);
+    // Fixed-size circular buffer for last 10 peaks
+    float last10Peaks[PEAK_QUEUE_SIZE] = {0};
+    int peakIndex = 0;
+    int peakCount = 0;
+    float avgRPeak = 0.0;
+    float stdev = 0.0;
+    compVoltage = -1.0;
 
-    // LRI BPM
-    display.setCursor(0, 0);
-    display.print("LRI BPM: ");
-    display.println(LRI_BPM);
+    while (true)
+    {
+        // --- NEW: Wait for semaphore from paceMakerTask ---
+        if (xSemaphoreTake(compVoltageSemaphore, portMAX_DELAY) == pdTRUE)
+        {
+            if (xSemaphoreTake(ecgAmpMutex, portMAX_DELAY))
+            {
+                currentECG_amp = ECG_amp;
+                xSemaphoreGive(ecgAmpMutex);
+            }
+            else
+            {
+                Serial.println("Failed to take mutex in compVoltageTask");
+            }
 
-    // Beat detection and data
-    display.setCursor(0, 20);
-    display.print("HR: ");
-    display.print(HR);
-    display.println(" BPM");
+            int qrs = detector.processSample(currentECG_amp);
+            ("QRS: ");
+            (qrs);
+            if (qrs != -1)
+            {
+                // Store the new peak in the circular buffer
+                last10Peaks[peakIndex] = currentECG_amp;
+                peakIndex = (peakIndex + 1) % PEAK_QUEUE_SIZE;
+                if (peakCount < PEAK_QUEUE_SIZE) peakCount++;
 
-    display.setCursor(0, 30);
-    display.print("R-R: ");
-    display.print(RR_interval);
-    display.println(" ms");
+                // Calculate average
+                float sum = 0.0;
+                for (int i = 0; i < peakCount; ++i) sum += last10Peaks[i];
+                avgRPeak = sum / peakCount;
 
-    display.setCursor(0, 40);
-    // Keep "Pacing..." on the screen for a longer duration (e.g., 1 second)
-    if (digitalRead(PACING_PIN) == HIGH || (currentMillis - pacingDisplayTime < 300)) {
-        display.println("Pacing...");
-    }
+                // Calculate standard deviation
+                float variance = 0.0;
+                for (int i = 0; i < peakCount; ++i)
+                    variance += (last10Peaks[i] - avgRPeak) * (last10Peaks[i] - avgRPeak);
+                variance /= peakCount;
+                stdev = sqrt(variance);
 
-    display.setCursor(0, 50);
-    display.print("Comparator: ");
-    display.print(vComp, 2);
-    display.println(" V");
+                ("Average R-peak amplitude: ");
+                Serial.println(avgRPeak);
+            }
+            
+            numOfSaved = peakCount;
 
-    // Finalize display
-    display.display();
-}
-
-// Function to send data to Teleplot
-void sendToTeleplot(float ECG_amp, float ECG_comp, float HR, float RR_interval, int pace) {
-    Serial.print(">ECG_amp:");
-    Serial.print(ECG_amp);
-    Serial.print(">ECG_comp:");
-    Serial.print(ECG_comp);
-    Serial.print(">HR:");
-    Serial.print(HR);
-    Serial.print(">RR_interval:");
-    Serial.print(RR_interval);
-    Serial.print(">Pace:");
-    Serial.println(pace);
-}
-
-void updateVComp() {
-    if (peakCount >= 10) {
-        // Sort the array to find the 5th percentile
-        float sortedPeaks[10];
-        memcpy(sortedPeaks, peakAmplitudes, sizeof(peakAmplitudes));
-        for (int i = 0; i < 10 - 1; i++) {
-            for (int j = i + 1; j < 10; j++) {
-                if (sortedPeaks[i] > sortedPeaks[j]) {
-                    float temp = sortedPeaks[i];
-                    sortedPeaks[i] = sortedPeaks[j];
-                    sortedPeaks[j] = temp;
-                }
+            if (peakCount >= PEAK_QUEUE_SIZE)
+            {
+                compVoltage = avgRPeak - (0.5 * stdev);
+                uint8_t dacValue = (uint8_t)((compVoltage / 3.3) * 255); // Scale to 8-bit range
+                dacValue = constrain(dacValue, 0, 255);
+                digitalWrite(DAC_PIN, dacValue);
             }
         }
-
-        // Calculate the 5th percentile index
-        int index = (int)(0.05 * peakCount);
-        vComp = sortedPeaks[index];
+        // No vTaskDelay needed; task blocks on the semaphore
     }
-
-    // Clamp vComp to the valid range
-    if (vComp < 0.0f) {
-        vComp = 0.0f;
-    } else if (vComp > 3.3f) {
-        vComp = 3.3f;
-    }
-
-    // Debug print
-    Serial.print("vComp (clamped): ");
-    Serial.println(vComp);
-
-    // Write the new Vcomp to the DAC pin
-    int dacValue = map(vComp * 1000, 0, 3300, 0, 255);
-    dacWrite(DAC_PIN, dacValue);
-
-    // Debug print
-    Serial.print("DAC Value: ");
-    Serial.println(dacValue);
-}
-
-void handleMissedBeat() {
-    vComp = std::max(0.0f, vComp - 0.1f); // Ensure vComp doesn't go below 0
-    vComp = std::min(vComp, 3.3f);        // Clamp to 3.3V
-
-    int dacValue = map(vComp * 1000, 0, 3300, 0, 255);
-    dacWrite(DAC_PIN, dacValue);
-
-    // Debug print
-    Serial.print("Missed Beat - vComp: ");
-    Serial.println(vComp);
-    Serial.print("DAC Value: ");
-    Serial.println(dacValue);
-}
-
-void processPeak(float peakAmplitude) {
-    // Add the new peak to the array in a circular manner
-    peakAmplitudes[peakIndex] = peakAmplitude;
-    peakIndex = (peakIndex + 1) % 10; // Wrap around the index
-    if (peakCount < 10) {
-        peakCount++; // Increment the count until the array is full
-    }
-
-    // Debug print
-    Serial.print("New Peak Amplitude: ");
-    Serial.println(peakAmplitude);
-
-    updateVComp();
 }
