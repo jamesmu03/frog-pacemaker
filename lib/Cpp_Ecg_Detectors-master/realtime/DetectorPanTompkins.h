@@ -21,7 +21,7 @@
 class DetectorPanTompkins : public RealTimeDetector  {
 public:
     explicit DetectorPanTompkins(double fs) : RealTimeDetector(fs){
-        bandPass.setup(fs, 10.0, 5.0);
+        bandPass.setup(fs, 10.0, 20.0);
     };
     int processSample(double sample) override;
     void reset() override;

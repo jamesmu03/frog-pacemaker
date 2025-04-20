@@ -43,10 +43,10 @@ int numOfSaved = 0;
 void setup()
 {
     Serial.begin(115200);
-    pinMode(ECG_AMP_PIN, INPUT);
-    pinMode(ECG_COMP_PIN, INPUT);
     pinMode(PACING_PIN, OUTPUT);
     pinMode(DAC_PIN, OUTPUT);
+    pinMode(ECG_AMP_PIN, INPUT_PULLDOWN);
+    pinMode(ECG_COMP_PIN, INPUT_PULLDOWN);
 
     xTaskCreatePinnedToCore(paceMakerTask, "PaceMakerTask", 5000, NULL, 1, &pacemakerTaskHandle, 0);
     xTaskCreatePinnedToCore(compVoltageTask, "CompVoltageTask", 20000, NULL, 1, &compVoltageTaskHandle, 1);
@@ -150,9 +150,10 @@ void paceMakerTask(void *pvParameters)
                 }
                 
                 ECG_comp = analogRead(ECG_COMP_PIN);
-                // --- NEW: Trigger compVoltageTask after ACQUIRING ---
-                xSemaphoreGive(compVoltageSemaphore);
-                // ----------------------------------------------------
+                xSemaphoreGive(compVoltageSemaphore); // Notify compVoltageTask
+
+                updateOLED(HR, RR_interval, display);
+
                 currentState = PROCESSING;
             }
             break;
@@ -170,7 +171,6 @@ void paceMakerTask(void *pvParameters)
 
                 HR = 60000.0 / RR_interval;
 
-                updateOLED(HR, RR_interval, display);
             }
 
             prevCompVoltage = true_ECG_comp;
@@ -214,7 +214,7 @@ void paceMakerTask(void *pvParameters)
 void compVoltageTask(void *pvParameters)
 {
     float currentECG_amp = 0.0;
-    DetectorEngZeeRealTime detector(SAMPLING_RATE);
+    DetectorPanTompkins detector(SAMPLING_RATE);
 
     // Fixed-size circular buffer for last 10 peaks
     float last10Peaks[PEAK_QUEUE_SIZE] = {0};
@@ -224,6 +224,10 @@ void compVoltageTask(void *pvParameters)
     float stdev = 0.0;
     compVoltage = -1.0;
     static int sampleCounter = 0;
+    volatile int dacValue = 0;
+    // Create a circular buffer to store the last 100 values of currentECG_amp
+    static float ecg_amp_buffer[100] = {0};
+    static int bufferIndex = 0;
 
     while (true)
     {
@@ -246,42 +250,71 @@ void compVoltageTask(void *pvParameters)
                 sampleCounter = 0;
             }
 
+            // Add the currentECG_amp to the buffer
+            ecg_amp_buffer[bufferIndex] = currentECG_amp;
+            bufferIndex = (bufferIndex + 1) % 100;
+
             int qrs = detector.processSample(currentECG_amp);
-            ("QRS: ");
-            (qrs);
+            Serial.print(">ECG: ");
+            Serial.println(currentECG_amp / 4096, 2);
+
             if (qrs != -1)
             {
-                // Store the new peak in the circular buffer
-                last10Peaks[peakIndex] = currentECG_amp;
+                // Find the maximum value in the buffer
+                float maxECG_amp = ecg_amp_buffer[0];
+                for (int i = 1; i < 100; i++)
+                {
+                    if (ecg_amp_buffer[i] > maxECG_amp)
+                    {
+                        maxECG_amp = ecg_amp_buffer[i];
+                    }
+                }
+
+                // Store the maximum value in the circular buffer for last10Peaks
+                Serial.print(">Peak: ");
+                Serial.println(1);
+                last10Peaks[peakIndex] = maxECG_amp;
                 peakIndex = (peakIndex + 1) % PEAK_QUEUE_SIZE;
-                if (peakCount < PEAK_QUEUE_SIZE) peakCount++;
-
-                // Calculate average
-                float sum = 0.0;
-                for (int i = 0; i < peakCount; ++i) sum += last10Peaks[i];
-                avgRPeak = sum / peakCount;
-
-                // Calculate standard deviation
-                float variance = 0.0;
-                for (int i = 0; i < peakCount; ++i)
-                    variance += (last10Peaks[i] - avgRPeak) * (last10Peaks[i] - avgRPeak);
-                variance /= peakCount;
-                stdev = sqrt(variance);
-
-                ("Average R-peak amplitude: ");
-                Serial.println(avgRPeak);
+                if (peakCount < PEAK_QUEUE_SIZE)
+                    peakCount++;
+            }
+            else
+            {
+                Serial.print(">Peak: ");
+                Serial.println(0);
             }
             
             numOfSaved = peakCount;
 
             if (peakCount >= PEAK_QUEUE_SIZE)
             {
-                compVoltage = avgRPeak - (0.5 * stdev);
-                uint8_t dacValue = (uint8_t)((compVoltage / 3.3) * 255); // Scale to 8-bit range
-                dacValue = constrain(dacValue, 0, 255);
-                digitalWrite(DAC_PIN, dacValue);
+                // Calculate avg and stdev of last10peaks'
+                avgRPeak = std::accumulate(last10Peaks, last10Peaks + PEAK_QUEUE_SIZE, 0.0) / PEAK_QUEUE_SIZE;
+
+                float sumSquaredDiffs = 0.0;
+                for (int i = 0; i < PEAK_QUEUE_SIZE; i++)
+                {
+                    float diff = last10Peaks[i] - avgRPeak;
+                    sumSquaredDiffs += diff * diff;
+                }
+                stdev = sqrt(sumSquaredDiffs / PEAK_QUEUE_SIZE);
+
+                // Calculate compVoltage
+                compVoltage = avgRPeak - (stdev * 0.7);
+                compVoltage = map(compVoltage, 0, 4096, 0, 3300) / 1000.0; // Convert to volts
+                avgRPeak = map(avgRPeak, 0, 4096, 0, 3300) / 1000.0; // Convert to volts
+                stdev = map(stdev, 0, 4096, 0, 3300) / 1000.0; // Convert to volts
+
+                dacValue = (u_int8_t)(compVoltage/3.3 * 255.0); // Scale to DAC range
+
+                Serial.print("Avg: ");
+                Serial.print(avgRPeak, 2);
+                Serial.print(" Stdev: ");
+                Serial.print(stdev, 2);
+                Serial.print(" dacValue: ");
+                Serial.println(dacValue);
+                dacWrite(DAC_PIN, dacValue);
             }
         }
-        // No vTaskDelay needed; task blocks on the semaphore
     }
 }
