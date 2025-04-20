@@ -143,8 +143,6 @@ void paceMakerTask(void *pvParameters)
                 {
                     ECG_amp = analogRead(ECG_AMP_PIN);
                     xSemaphoreGive(ecgAmpMutex);
-                    Serial.print("ECG Amp: ");
-                    Serial.println(ECG_amp);
                 }
                 else
                 {
@@ -225,6 +223,7 @@ void compVoltageTask(void *pvParameters)
     float avgRPeak = 0.0;
     float stdev = 0.0;
     compVoltage = -1.0;
+    static int sampleCounter = 0;
 
     while (true)
     {
@@ -239,6 +238,12 @@ void compVoltageTask(void *pvParameters)
             else
             {
                 Serial.println("Failed to take mutex in compVoltageTask");
+            }
+
+            sampleCounter++;
+            if (sampleCounter >= 4000) {
+                detector.reset();
+                sampleCounter = 0;
             }
 
             int qrs = detector.processSample(currentECG_amp);
