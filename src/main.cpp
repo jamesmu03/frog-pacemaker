@@ -12,13 +12,13 @@
 // Pin and hardware definitions
 #define ECG_AMP_PIN 35
 #define ECG_COMP_PIN 4
-#define SAMPLING_RATE 100
-#define COMP_THRESHOLD 2.5
+#define SAMPLING_RATE 400 // Hz
+#define COMP_THRESHOLD 0.1 // V
 #define PACING_PIN 2
 #define CHRONAXIE 1.7895
 #define DAC_PIN 25
-#define PEAK_QUEUE_SIZE 10
-#define ECG_AMP_BUFFER_SIZE 50
+#define PEAK_QUEUE_SIZE 8
+#define ECG_AMP_BUFFER_SIZE int(round(SAMPLING_RATE / 1.5))
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 64
 #define OLED_RESET -1
@@ -45,8 +45,8 @@ void setup()
     Serial.begin(115200);
     pinMode(PACING_PIN, OUTPUT);
     pinMode(DAC_PIN, OUTPUT);
-    pinMode(ECG_AMP_PIN, INPUT_PULLDOWN);
-    pinMode(ECG_COMP_PIN, INPUT_PULLDOWN);
+    pinMode(ECG_AMP_PIN, INPUT);
+    pinMode(ECG_COMP_PIN, INPUT);
 
     xTaskCreatePinnedToCore(paceMakerTask, "PaceMakerTask", 5000, NULL, 1, &pacemakerTaskHandle, 0);
     xTaskCreatePinnedToCore(compVoltageTask, "CompVoltageTask", 20000, NULL, 1, &compVoltageTaskHandle, 1);
@@ -64,24 +64,29 @@ void updateOLED(float HR, float RR_interval, Adafruit_SSD1306 &display)
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, 0);
-    display.setTextSize(2);
-    display.print(HR, 2);
-    display.println(" BPM");
 
-    display.setTextSize(1);
-    display.print("RR: ");
-    display.print(RR_interval, 0);
-    display.println(" ms");
+    if (numOfSaved < PEAK_QUEUE_SIZE)
+    {
+        display.print("# Peaks Pr: ");
+        display.print(numOfSaved, 0);
+        display.print("/");
+        display.print(PEAK_QUEUE_SIZE, 0);
+    }
+    else
+    {
+        display.setTextSize(2);
+        display.print(HR, 2);
+        display.println(" BPM");
 
-    display.print("VComp: ");
-    display.print(compVoltage, 2);
-    display.println(" V");
+        display.setTextSize(1);
+        display.print("RR: ");
+        display.print(RR_interval, 0);
+        display.println(" ms");
 
-    display.print("# Peaks Pr: ");
-    display.print(numOfSaved, 0);
-    display.print("/");
-    display.print(PEAK_QUEUE_SIZE, 0);
-
+        display.print("VComp: ");
+        display.print(compVoltage, 2);
+        display.println(" V");
+    }
     display.display();
 }
 
@@ -128,7 +133,8 @@ void paceMakerTask(void *pvParameters)
             pdMS_TO_TICKS(CHRONAXIE * 2),
             pdFALSE,
             (void *)0,
-            [](TimerHandle_t xTimer) {
+            [](TimerHandle_t xTimer)
+            {
                 digitalWrite(PACING_PIN, LOW);
             });
     }
@@ -141,7 +147,7 @@ void paceMakerTask(void *pvParameters)
         {
         case INIT:
             samplingInterval = 1000 / SAMPLING_RATE;
-            LRI_BPM = 60;
+            LRI_BPM = 30;
             LRI = 60000 / LRI_BPM;
             currentState = ACQUIRING;
             Serial.println("Initialized");
@@ -155,7 +161,11 @@ void paceMakerTask(void *pvParameters)
                 previousMillis = currentMillis;
 
                 ECG_amp = analogRead(ECG_AMP_PIN);
+                Serial.print(">ECG_amp: ");
+                Serial.println(ECG_amp);
                 ECG_comp = analogRead(ECG_COMP_PIN);
+                Serial.print(">ECG_comp: ");
+                Serial.println(ECG_comp);
 
                 currentState = PROCESSING;
             }
@@ -176,7 +186,11 @@ void paceMakerTask(void *pvParameters)
             }
 
             prevCompVoltage = true_ECG_comp;
-
+            if (HR > 0.1)
+            {
+                // Update the OLED display with HR and RR interval
+                updateOLED(HR, RR_interval, display);
+            }
             if (currentMillis - prevEdgeTime > LRI)
             {
                 currentState = PACING;
@@ -186,18 +200,16 @@ void paceMakerTask(void *pvParameters)
                 currentState = ACQUIRING;
             }
             xSemaphoreGive(compVoltageSemaphore); // Notify compVoltageTask
-            updateOLED(HR, RR_interval, display);
             break;
 
         case PACING:
-            if (currentMillis - lastPaceTime >= LRI)
+            if (currentMillis - lastPaceTime >= LRI && numOfSaved >= PEAK_QUEUE_SIZE)
             {
-                lastPaceTime = currentMillis;
-
+                // Pace the heart
                 digitalWrite(PACING_PIN, HIGH);
                 xTimerStart(pacingTimer, 0);
-
-                pacingDisplayTime = currentMillis;
+                lastPaceTime = currentMillis;
+                currentState = ACQUIRING;
             }
             currentState = ACQUIRING;
             break;
@@ -239,7 +251,7 @@ void compVoltageTask(void *pvParameters)
             currentECG_amp = ECG_amp;
 
             sampleCounter++;
-            if (sampleCounter >= 4000)
+            if (sampleCounter >= 4027)
             {
                 detector.reset();
                 sampleCounter = 0;
