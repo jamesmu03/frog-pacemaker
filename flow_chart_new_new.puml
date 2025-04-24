@@ -2,7 +2,6 @@
 // Template from Dr. Palmeri
 
 @startuml
-
 !theme mars
 
 [*] -> init
@@ -10,46 +9,41 @@
 state init {
     init: set sampling rate
     init: set LRI
-    init: acquire starting Vcomp
+    init: acquire initial Vcomp
 }
 
 state acquiring {
-    acquiring: acquire amplified electrogram
-    acquiring: acquire comparator output
-    acquiring: find peaks
+    acquiring: read ECG amp signal
+    acquiring: read comparator output
 }
 
 state processing {
-    processing: detect ventricular depolarization
-    processing: determine time since last depolarization
-    processing: calculate instantaneous HR
-    processing: filter out T waves
-    processing: calculate 95% CI of V peaks
+    processing: detect QRS from comparator
+    processing: calculate R-R interval
+    processing: update HR
+    processing: set new Vcomp
 }
 
 state pacing {
-    pacing: trigger pacemaker
-}
-
-state set_comp_voltage as "set comp voltage" {
-    set_comp_voltage: set comparator voltage
+    pacing: deliver stimulus pulse
 }
 
 state error {
-    error: safe mode
+    error: enter safe mode
 }
 
 init -> acquiring : init complete
 init -d-> error : init failed
-acquiring -> processing : signals acquired
-processing --> pacing : HR < LRI
-processing -> acquiring : HR > LRI
-processing -> set_comp_voltage : pacing not needed
-pacing --> set_comp_voltage : pacing complete
-set_comp_voltage -> acquiring : set comp voltage complete
-set_comp_voltage -d-> error : set comp voltage failed
-acquiring -d-> error : signal acquisition failed
-error -> acquiring : reset error
+
+acquiring -> processing : new sample
+acquiring -d-> error : sampling failed
+
+processing -> acquiring : R-R < LRI
+processing --> pacing : R-R > LRI
+
+pacing -> acquiring : pulse delivered
+
+error -> acquiring : error cleared
 error -d-> [*] : time out
 
 @enduml
